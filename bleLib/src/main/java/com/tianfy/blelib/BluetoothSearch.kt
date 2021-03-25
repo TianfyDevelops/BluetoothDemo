@@ -161,7 +161,7 @@ class BluetoothSearch(
         val bluetoothManager =
             activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?
         bluetoothAdapter = bluetoothManager?.adapter
-        if (bluetoothManager?.adapter?.isEnabled == false) {
+        if (bluetoothAdapter?.isEnabled == false) {
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             activity.startActivity(enableBtIntent)
         } else {
