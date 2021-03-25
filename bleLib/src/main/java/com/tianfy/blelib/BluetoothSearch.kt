@@ -1,4 +1,4 @@
-package com.example.bluetoothdemo
+package com.tianfy.blelib
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -20,13 +20,15 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.OnLifecycleEvent
+import org.jetbrains.annotations.NotNull
 
 /**
  *
  * @ProjectName:    BluetoothDemo
  * @Package:        com.example.bluetoothdemo
  * @ClassName:      BluetoothSearch
- * @Description:     java类作用描述
+ * @Description:     蓝牙搜索封装类，实现LifecycleObserver接口，封装了权限申请，蓝牙搜索等相关代码逻辑
+ *                  通过builder建造者模式，实现搜索开始，搜索停止，搜索结果的回调
  * @Author:         tianfy
  * @CreateDate:     2021/3/24 20:47
  * @UpdateUser:     更新者：
@@ -35,28 +37,45 @@ import androidx.lifecycle.OnLifecycleEvent
  * @Version:        1.0
  */
 class BluetoothSearch(
-    val activity: AppCompatActivity,
-    val onBluetoothSearchListener: OnBluetoothSearchListener
+    builder: Builder
 ) : LifecycleObserver,
     ActivityCompat.OnRequestPermissionsResultCallback {
 
+    /* 请求位置权限的requestCode */
     private val PERMISSION_REQUEST_CODE = 101
-    private var tipsDialog: AlertDialog
-    private val handler = Handler(activity.mainLooper)
 
+    /* 提示用户为什么需要位置权限的dialog */
+    private var tipsDialog: AlertDialog
+
+    /* 当前activity */
+    private var activity: AppCompatActivity
+
+    /* 蓝牙扫描时间定义 默认1000毫秒=10s*/
+    private var blueScanTime: Long
+
+    /* 主线程Handler */
+    private val handler = Handler(builder.getActivity().mainLooper)
+
+    /* bluetoothAdapter */
     private var bluetoothAdapter: BluetoothAdapter? = null
 
+    /* 是否正在扫描的标志位 */
     private var isScan = false
 
+    /* 蓝牙扫描监听 */
+    private var onBluetoothSearchListener: OnBluetoothSearchListener
+
     init {
+        activity = builder.getActivity()
+        blueScanTime = builder.getScanTime()
+        onBluetoothSearchListener = builder.getOnBluetoothSearchListener()
         tipsDialog = AlertDialog.Builder(activity)
             .setTitle("权限申请").setMessage("使用该功能需要打开该权限，点击确认前往设置页面打开该权限")
-            .setPositiveButton("确认", { dialog, which ->
-                dialog.dismiss()
-
-            }).setNegativeButton("取消", { dialog, which ->
-                dialog.dismiss()
-            }).create()
+            .setPositiveButton("确认") { _, _ ->
+                goToLocationSettingActivity()
+            }.setNegativeButton("取消") { _, _ ->
+                activity.finish()
+            }.create()
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_RESUME)
@@ -71,8 +90,24 @@ class BluetoothSearch(
         scanLeDevice(false)
     }
 
+    /**
+     * 对外暴露重新扫描的方法
+     */
+    @RequiresApi(Build.VERSION_CODES.M)
+    fun reScan() {
+        //先停止扫描
+        scanLeDevice(false)
+        //重新扫描
+        checkPermissions()
+    }
+
+    /**
+     * 检查是否有位置权限
+     */
     @RequiresApi(Build.VERSION_CODES.M)
     private fun checkPermissions() {
+        //如果在android9以上，需要申请Manifest.permission.ACCESS_FINE_LOCATION权限
+        //android9以下，只需要申请Manifest.permission.ACCESS_COARSE_LOCATION权限
         if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
             if (activity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED
@@ -103,11 +138,18 @@ class BluetoothSearch(
         if (networkProvider || gpsProvider) {
             checkBluetoothEnable()
         } else {
-            val locationIntent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
-            activity.startActivity(
-                locationIntent,
-            )
+            tipsDialog.show()
         }
+    }
+
+    /**
+     * 前往位置服务设置页面
+     */
+    private fun goToLocationSettingActivity() {
+        val locationIntent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+        activity.startActivity(
+            locationIntent,
+        )
     }
 
     /**
@@ -127,16 +169,19 @@ class BluetoothSearch(
         }
     }
 
+    /**
+     * 扫描设备
+     * @param enable 扫描停止和开始的标志位
+     */
     private fun scanLeDevice(enable: Boolean) {
         val scanner = bluetoothAdapter?.getBluetoothLeScanner()
         if (enable) {
             onBluetoothSearchListener.onScanStart()
             isScan = true
-            val SCAN_PERIOD = 10000 //扫描周期10秒，开始扫描10秒后停止扫描
             handler.postDelayed({
                 scanner?.stopScan(scanCallback)
                 onBluetoothSearchListener.onScanStop()
-            }, SCAN_PERIOD.toLong())
+            }, blueScanTime)
             scanner?.startScan(scanCallback)
         } else {
             onBluetoothSearchListener.onScanStop()
@@ -157,11 +202,18 @@ class BluetoothSearch(
         }
     }
 
+    /**
+     * 请求位置权限
+     * @param permission 权限名称
+     */
     @RequiresApi(Build.VERSION_CODES.M)
     private fun requestPermission(permission: String) {
         activity.requestPermissions(arrayOf(permission), PERMISSION_REQUEST_CODE)
     }
 
+    /**
+     * 权限申请结果回调
+     */
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -194,14 +246,66 @@ class BluetoothSearch(
         }
     }
 
-
-   interface OnBluetoothSearchListener {
-        //扫描开始，可以开始执行一些动画或者显示提示信息
+    /**
+     * 蓝牙扫描监听
+     */
+    interface OnBluetoothSearchListener {
+        /**
+         * 扫描开始，可以开始执行一些动画或者显示提示信息
+         */
         fun onScanStart()
-        //扫描停止，可以停止动画或者显示提示信息
+
+        /**
+         *扫描停止，可以停止动画或者显示提示信息
+         */
         fun onScanStop()
-        //扫描结果
+
+        /**
+         * 扫描结果
+         */
         fun onScanResult(device: BluetoothDevice)
+    }
+
+    class Builder(private val activity: AppCompatActivity) {
+
+        private lateinit var onBluetoothSearchListener: OnBluetoothSearchListener
+        private var blueScanTime: Long = 1000
+
+        fun getActivity(): AppCompatActivity {
+            return activity
+        }
+
+        /**
+         * 设置蓝牙扫描时间
+         * @param time 毫秒值
+         */
+        fun setScanTime(time: Long): Builder {
+            this.blueScanTime = time
+            return this
+        }
+
+        fun getScanTime(): Long {
+            return blueScanTime
+        }
+
+        /**
+         * 设置蓝牙扫描监听
+         * @param onBluetoothSearchListener 蓝牙扫描监听
+         */
+        fun setOnBluetoothSearchListener(@NotNull onBluetoothSearchListener: OnBluetoothSearchListener): Builder {
+            this.onBluetoothSearchListener = onBluetoothSearchListener
+            return this
+        }
+
+        fun getOnBluetoothSearchListener(): OnBluetoothSearchListener {
+            return onBluetoothSearchListener
+        }
+
+        fun builder(): BluetoothSearch {
+            return BluetoothSearch(this)
+        }
+
+
     }
 
 

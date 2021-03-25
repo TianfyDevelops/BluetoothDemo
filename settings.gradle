@@ -1,2 +1,4 @@
+include ':bleLib'
+include ':bleLib'
 include ':app'
 rootProject.name = "BluetoothDemo"
